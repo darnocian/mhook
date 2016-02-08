@@ -40,6 +40,22 @@ BOOL InitInstruction(INSTRUCTION *Instruction, DISASSEMBLER *Disassembler);
 struct _ARCHITECTURE_FORMAT *GetArchitectureFormat(ARCHITECTURE_TYPE Type);
 
 //////////////////////////////////////////////////////////////////////
+// Error handling
+//////////////////////////////////////////////////////////////////////
+
+static void DefaultErrorHandler(ULONG64 virtualAddress, BOOL isError, LPCWSTR fmt, ...)
+{
+	va_list vl;
+	va_start(vl,fmt);
+	wprintf(isError ? L"[0x%08I64X] ERROR: " : L"[0x%08I64X] ANOMALY: ", virtualAddress);
+	vwprintf(fmt, vl);
+	wprintf(L"\n");
+	va_end(vl);
+}
+
+tDisasmErrorProc tDisasmErrorHandler = DefaultErrorHandler;
+
+//////////////////////////////////////////////////////////////////////
 // Disassembler setup
 //////////////////////////////////////////////////////////////////////
 

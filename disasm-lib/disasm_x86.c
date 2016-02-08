@@ -76,6 +76,9 @@
 
 #define SIZE_LEFT (MAX_OPCODE_DESCRIPTION-1 > Instruction->StringIndex ? MAX_OPCODE_DESCRIPTION-Instruction->StringIndex : 0)
 
+#define DISASM_ERROR(...) tDisasmErrorHandler(VIRTUAL_ADDRESS, TRUE, __VA_ARGS__)
+#define DISASM_ANOMALY(...) tDisasmErrorHandler(VIRTUAL_ADDRESS, FALSE, __VA_ARGS__)
+
 // If an address size prefix is used for an instruction that doesn't make sense, restore it
 // to the default
 
@@ -83,7 +86,7 @@
 { \
 	if (!Instruction->AnomalyOccurred && X86Instruction->HasOperandSizePrefix) \
 	{ \
-		if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Unexpected operand size prefix\n", VIRTUAL_ADDRESS); \
+		if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Unexpected operand size prefix"); \
 		Instruction->AnomalyOccurred = TRUE; \
 		X86Instruction->HasOperandSizePrefix = FALSE; \
 		switch (X86Instruction->OperandSize) \
@@ -99,7 +102,7 @@
 { \
 	if (!Instruction->AnomalyOccurred && X86Instruction->HasAddressSizePrefix) \
 	{ \
-		if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Unexpected address size prefix\n", VIRTUAL_ADDRESS); \
+		if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Unexpected address size prefix"); \
 		Instruction->AnomalyOccurred = TRUE; \
 	} \
 	X86Instruction->HasAddressSizePrefix = FALSE; \
@@ -114,7 +117,7 @@
 #define SANITY_CHECK_SEGMENT_OVERRIDE() \
 	if (!Instruction->AnomalyOccurred && X86Instruction->HasSegmentOverridePrefix) \
 	{ \
-		if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Unexpected segment override\n", VIRTUAL_ADDRESS); \
+		if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Unexpected segment override"); \
 		Instruction->AnomalyOccurred = TRUE; \
 	}
 
@@ -130,7 +133,7 @@
 	{ \
 		if (!Instruction->AnomalyOccurred) \
 		{ \
-			if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: unexpected segment 0x%02X\n", VIRTUAL_ADDRESS, X86Instruction->Selector); \
+			if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: unexpected segment 0x%02X", X86Instruction->Selector); \
 			Instruction->AnomalyOccurred = TRUE; \
 		} \
 	} \
@@ -1013,7 +1016,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 		{
 			if (!Instruction->AnomalyOccurred)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: REX prefix before legacy prefix 0x%02X\n", VIRTUAL_ADDRESS, Opcode);
+				if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: REX prefix before legacy prefix 0x%02X", Opcode);
 				Instruction->AnomalyOccurred = TRUE;
 			}
 			continue;
@@ -1027,7 +1030,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				{
 					if (Instruction->Prefixes[i] == Opcode)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Duplicate prefix 0x%02X\n", VIRTUAL_ADDRESS, Opcode);
+						if (!SuppressErrors)  DISASM_ERROR(L"ANOMALY: Duplicate prefix 0x%02X", Opcode);
 						Instruction->AnomalyOccurred = TRUE;
 						break;
 					}
@@ -1040,7 +1043,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					SSE_Prefix = Opcode;
 					if (!Instruction->AnomalyOccurred && X86Instruction->HasRepeatWhileEqualPrefix)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Conflicting prefix\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Conflicting prefix");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					Instruction->Repeat = TRUE;
@@ -1051,7 +1054,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					SSE_Prefix = Opcode;
 					if (!Instruction->AnomalyOccurred && X86Instruction->HasRepeatWhileNotEqualPrefix)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Conflicting prefix\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Conflicting prefix");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 
@@ -1064,7 +1067,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					SSE_Prefix = Opcode;
 					if (!Instruction->AnomalyOccurred && X86Instruction->HasOperandSizePrefix)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Conflicting prefix\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ERROR(L"ANOMALY: Conflicting prefix");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					
@@ -1081,7 +1084,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				case PREFIX_ADDRESS_SIZE:
 					if (!Instruction->AnomalyOccurred && X86Instruction->HasAddressSizePrefix)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Conflicting prefix\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Conflicting prefix");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 
@@ -1113,7 +1116,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					}
 					else if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Meaningless segment override\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Meaningless segment override");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					break;
@@ -1126,7 +1129,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					}
 					else if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Meaningless segment override\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Meaningless segment override");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					break;
@@ -1139,7 +1142,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					}
 					else if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Meaningless segment override\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Meaningless segment override");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					break;
@@ -1152,7 +1155,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					}
 					else if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Meaningless segment override\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Meaningless segment override");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					break;
@@ -1170,7 +1173,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				case PREFIX_LOCK:
 					if (!Instruction->AnomalyOccurred && X86Instruction->HasLockPrefix)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Conflicting prefix\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Conflicting prefix");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					X86Instruction->HasLockPrefix = TRUE;
@@ -1183,12 +1186,12 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 			if (Instruction->PrefixCount >= X86_MAX_INSTRUCTION_LEN)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Reached maximum prefix count %d\n", VIRTUAL_ADDRESS, X86_MAX_PREFIX_LENGTH);
+				if (!SuppressErrors) DISASM_ERROR(L"Reached maximum prefix count %d", X86_MAX_PREFIX_LENGTH);
 				goto abort;
 			}
 			else if (Instruction->PrefixCount == X86_MAX_PREFIX_LENGTH)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Reached maximum prefix count %d\n", VIRTUAL_ADDRESS, X86_MAX_PREFIX_LENGTH);
+				if (!SuppressErrors) DISASM_ANOMALY(L"Reached maximum prefix count %d", X86_MAX_PREFIX_LENGTH);
 				Instruction->AnomalyOccurred = TRUE;
 			}
 
@@ -1210,12 +1213,12 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 	{
 		if (Instruction->PrefixCount >= X86_MAX_INSTRUCTION_LEN)
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ERROR: Reached maximum prefix count %d\n", VIRTUAL_ADDRESS, X86_MAX_PREFIX_LENGTH);
+			if (!SuppressErrors) DISASM_ERROR(L"Reached maximum prefix count %d", X86_MAX_PREFIX_LENGTH);
 			goto abort;
 		}
 		else if (!Instruction->AnomalyOccurred && Instruction->PrefixCount == AMD64_MAX_PREFIX_LENGTH)
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Reached maximum prefix count %d\n", VIRTUAL_ADDRESS, X86_MAX_PREFIX_LENGTH);
+			if (!SuppressErrors) DISASM_ANOMALY(L"Reached maximum prefix count %d", X86_MAX_PREFIX_LENGTH);
 			Instruction->AnomalyOccurred = TRUE;
 		}
 
@@ -1241,7 +1244,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 		{
 			if (!Instruction->AnomalyOccurred)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: meaningless REX prefix used\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"meaningless REX prefix used");
 				Instruction->AnomalyOccurred = TRUE;
 			}
 			X86Instruction->rex_b = 0;
@@ -1259,7 +1262,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 	if (X86_INVALID(X86Opcode))
 	{
-		if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid opcode 0x%02X\n", VIRTUAL_ADDRESS, Opcode);
+		if (!SuppressErrors) DISASM_ERROR(L"Invalid opcode 0x%02X", Opcode);
 		goto abort;
 	}
 
@@ -1279,7 +1282,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 		//
 		if (X86_INVALID(X86Opcode))
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid two byte opcode 0x%02X 0x%02X\n", VIRTUAL_ADDRESS, X86_TWO_BYTE_OPCODE, Opcode);
+			if (!SuppressErrors) DISASM_ERROR(L"Invalid two byte opcode 0x%02X 0x%02X", X86_TWO_BYTE_OPCODE, Opcode);
 			goto abort;
 		}
 		
@@ -1287,7 +1290,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 		{
 			if (X86_Invalid_Addr64_2[Opcode])
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Opcode 0x%02X 0x%02X (\"%s\") illegal in 64-bit mode\n", VIRTUAL_ADDRESS, X86_TWO_BYTE_OPCODE, Opcode, X86Opcode->Mnemonic);
+				if (!SuppressErrors) DISASM_ERROR(L"Opcode 0x%02X 0x%02X (\"%s\") illegal in 64-bit mode", X86_TWO_BYTE_OPCODE, Opcode, X86Opcode->Mnemonic);
 				goto abort;
 			}
 #if 0
@@ -1297,7 +1300,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 					 GET_REX_R(X86Instruction->rex_b) && !GET_REX_R(X86_REX_2[Opcode]) ||
 					 GET_REX_W(X86Instruction->rex_b) && !GET_REX_W(X86_REX_2[Opcode])))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal REX prefix 0x%02X for opcode 0x%02X 0x%02X\n", VIRTUAL_ADDRESS, X86Instruction->rex_b, X86_TWO_BYTE_OPCODE, Opcode);
+				if (!SuppressErrors) DISASM_ERROR(L"Illegal REX prefix 0x%02X for opcode 0x%02X 0x%02X", X86Instruction->rex_b, X86_TWO_BYTE_OPCODE, Opcode);
 				assert(0);
 				goto abort;
 			}
@@ -1306,7 +1309,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 		if (X86Instruction->OperandSize == 2 && X86_Invalid_Op16_2[Opcode])
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ERROR: Opcode 0x%02X 0x%02X (\"%s\") illegal with 16-bit operand size\n", VIRTUAL_ADDRESS, X86_TWO_BYTE_OPCODE, Opcode, X86Opcode->Mnemonic);
+			if (!SuppressErrors) DISASM_ERROR(L"Opcode 0x%02X 0x%02X (\"%s\") illegal with 16-bit operand size", X86_TWO_BYTE_OPCODE, Opcode, X86Opcode->Mnemonic);
 			goto abort;
 		}
 
@@ -1353,7 +1356,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 			if (IS_X86_16())
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: SSE invalid in 16-bit mode\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ERROR(L"SSE invalid in 16-bit mode");
 				goto abort;
 			}
 		
@@ -1367,7 +1370,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 			if (X86_INVALID(X86Opcode))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal SSE instruction opcode 0x%02X 0x%02X + prefix 0x%02X\n", VIRTUAL_ADDRESS, Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Instruction->OpcodeBytes[2]);
+				if (!SuppressErrors) DISASM_ERROR(L"Illegal SSE instruction opcode 0x%02X 0x%02X + prefix 0x%02X", Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Instruction->OpcodeBytes[2]);
 				goto abort;
 			}
 			else if (X86_EXTENDED_OPCODE(X86Opcode))
@@ -1386,7 +1389,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 				if (X86_INVALID(X86Opcode))
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal SSE instruction opcode 0x%02X 0x%02X + prefix 0x%02X + extension %d\n", VIRTUAL_ADDRESS, Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Instruction->OpcodeBytes[2], OpcodeExtension);
+					if (!SuppressErrors) DISASM_ERROR(L"Illegal SSE instruction opcode 0x%02X 0x%02X + prefix 0x%02X + extension %d", Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Instruction->OpcodeBytes[2], OpcodeExtension);
 					goto abort;
 				}
 			}
@@ -1411,7 +1414,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 			if (X86_INVALID(X86Opcode))
 			{
 				Instruction->Length++;
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid group opcode 0x%02X 0x%02X extension 0x%02X\n", VIRTUAL_ADDRESS, X86_TWO_BYTE_OPCODE, Opcode, OpcodeExtension);
+				if (!SuppressErrors) DISASM_ERROR(L"Invalid group opcode 0x%02X 0x%02X extension 0x%02X", X86_TWO_BYTE_OPCODE, Opcode, OpcodeExtension);
 				goto abort;
 			}
 
@@ -1436,7 +1439,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 		{
 			if (X86_Invalid_Addr64_1[Opcode])
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Opcode 0x%02X (\"%s\") illegal in 64-bit mode\n", VIRTUAL_ADDRESS, Opcode, X86Opcode->Mnemonic);
+				if (!SuppressErrors) DISASM_ERROR(L"Opcode 0x%02X (\"%s\") illegal in 64-bit mode", Opcode, X86Opcode->Mnemonic);
 				goto abort;
 			}
 
@@ -1447,7 +1450,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				 GET_REX_R(X86Instruction->rex_b) && !GET_REX_R(X86_REX_1[Opcode]) ||
 				 GET_REX_W(X86Instruction->rex_b) && !GET_REX_W(X86_REX_1[Opcode])))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal REX prefix 0x%02X for opcode 0x%02X\n", VIRTUAL_ADDRESS, X86Instruction->rex_b, Opcode);
+				if (!SuppressErrors) DISASM_ERROR(L"Illegal REX prefix 0x%02X for opcode 0x%02X", X86Instruction->rex_b, Opcode);
 				assert(0);
 				goto abort;
 			}
@@ -1456,7 +1459,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 		if (X86Instruction->OperandSize == 2 && X86_Invalid_Op16_1[Opcode])
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ERROR: Opcode 0x%02X (\"%s\") illegal with 16-bit operand size\n", VIRTUAL_ADDRESS, Opcode, X86Opcode->Mnemonic);
+			if (!SuppressErrors) DISASM_ERROR(L"Opcode 0x%02X (\"%s\") illegal with 16-bit operand size", Opcode, X86Opcode->Mnemonic);
 			goto abort;
 		}
 
@@ -1482,7 +1485,7 @@ BOOL X86_GetInstruction(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 			if (X86_INVALID(X86Opcode))
 			{
 				Instruction->Length++;
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid group opcode 0x%02X extension 0x%02X\n", VIRTUAL_ADDRESS, Opcode, OpcodeExtension);
+				if (!SuppressErrors) DISASM_ERROR(L"Invalid group opcode 0x%02X extension 0x%02X", Opcode, OpcodeExtension);
 				goto abort;
 			}
 
@@ -1516,7 +1519,7 @@ HasSpecialExtension:
 			X86Opcode = &X86Opcode->Table[*Address];
 			if (X86_INVALID(X86Opcode))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal opcode 0x%02X 0x%02X + modrm 0x%02X\n", VIRTUAL_ADDRESS, Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], *Address);
+				if (!SuppressErrors) DISASM_ERROR(L"Illegal opcode 0x%02X 0x%02X + modrm 0x%02X", Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], *Address);
 				goto abort;
 			}
 			else if (X86_EXTENDED_OPCODE(X86Opcode))
@@ -1529,7 +1532,7 @@ HasSpecialExtension:
 				if (X86_INVALID(X86Opcode))
 				{
 					Instruction->Length++;
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid group opcode 0x%02X 0x%02X extension 0x%02X\n", VIRTUAL_ADDRESS, X86_TWO_BYTE_OPCODE, Opcode, OpcodeExtension);
+					if (!SuppressErrors) DISASM_ERROR(L"Invalid group opcode 0x%02X 0x%02X extension 0x%02X", X86_TWO_BYTE_OPCODE, Opcode, OpcodeExtension);
 					goto abort;
 				}
 
@@ -1563,7 +1566,7 @@ HasSpecialExtension:
 
 			if (X86_INVALID(X86Opcode))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Invalid FPU opcode 0x%02X + modrm extension 0x%02X (index 0x%02X)\n", VIRTUAL_ADDRESS, Opcode, X86Instruction->modrm_b, 0x08 + OpcodeExtension);
+				if (!SuppressErrors) DISASM_ERROR(L"Invalid FPU opcode 0x%02X + modrm extension 0x%02X (index 0x%02X)", Opcode, X86Instruction->modrm_b, 0x08 + OpcodeExtension);
 				goto abort;
 			}
 
@@ -1576,7 +1579,7 @@ HasSpecialExtension:
 			{
 				if (!Instruction->AnomalyOccurred && X86Opcode->Table == X86_3DNOW_0F)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: operand size prefix used with 3DNOW instruction\n", VIRTUAL_ADDRESS);
+					if (!SuppressErrors) DISASM_ANOMALY(L"operand size prefix used with 3DNOW instruction");
 					Instruction->AnomalyOccurred = TRUE;
 				}
 				X86Instruction->HasOperandSizePrefix = FALSE;
@@ -1597,7 +1600,7 @@ HasSpecialExtension:
 			
 			if (X86_INVALID(X86Opcode))
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal opcode 0x%02X 0x%02X + suffix 0x%02X\n", VIRTUAL_ADDRESS, Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Suffix);
+				if (!SuppressErrors) DISASM_ERROR(L"Illegal opcode 0x%02X 0x%02X + suffix 0x%02X", Instruction->OpcodeBytes[0], Instruction->OpcodeBytes[1], Suffix);
 				goto abort;
 			}
 			assert(Instruction->Length >= 4 + Instruction->PrefixCount);
@@ -1614,12 +1617,12 @@ HasSpecialExtension:
 	// Detect incompatibilities	
 	if (IS_X86_16() && X86Opcode->CPU > CPU_I386)
 	{
-		if (!SuppressErrors) printf("[0x%08I64X] ERROR: Instruction \"%s\" (opcode 0x%02X) can't be used in 16-bit X86\n", VIRTUAL_ADDRESS, X86Opcode->Mnemonic, Instruction->LastOpcode);
+		if (!SuppressErrors) DISASM_ERROR(L"Instruction \"%s\" (opcode 0x%02X) can't be used in 16-bit X86", X86Opcode->Mnemonic, Instruction->LastOpcode);
 		goto abort;
 	}
 	if (!IS_AMD64() && X86Opcode->CPU >= CPU_AMD64)
 	{
-		if (!SuppressErrors) printf("[0x%08I64X] ERROR: Instruction \"%s\" (opcode 0x%02X) can only be used in X86-64\n", VIRTUAL_ADDRESS, X86Opcode->Mnemonic, Instruction->LastOpcode);
+		if (!SuppressErrors) DISASM_ERROR(L"Instruction \"%s\" (opcode 0x%02X) can only be used in X86-64", X86Opcode->Mnemonic, Instruction->LastOpcode);
 		goto abort;
 	}
 
@@ -1671,7 +1674,7 @@ HasSpecialExtension:
 
 					if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: operand size prefix used with FPU/MMX/SSEx\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"operand size prefix used with FPU/MMX/SSEx");
 						goto abort;
 					}
 					X86Instruction->HasOperandSizePrefix = FALSE;
@@ -1684,7 +1687,7 @@ HasSpecialExtension:
 					// The Intel manual says this results in unpredictable behavior -- it's not even
 					// clear which SSE prefix is used as the third opcode byte in this case
 					// (e.g., is it the first or last SSE prefix?)
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: rep/repne used with MMX/SSEx\n", VIRTUAL_ADDRESS);
+					if (!SuppressErrors) DISASM_ERROR(L"rep/repne used with MMX/SSEx");
 					goto abort;
 
 				default:
@@ -1707,7 +1710,7 @@ HasSpecialExtension:
 					X86Instruction->HasOperandSizePrefix = FALSE;
 					if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: use of operand size prefix meaningless when REX.w=1\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"use of operand size prefix meaningless when REX.w=1");
 						Instruction->AnomalyOccurred = TRUE;
 					}				
 				}
@@ -1746,7 +1749,7 @@ HasSpecialExtension:
 			{
 				if (!Instruction->AnomalyOccurred)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: use of REX.w is meaningless (default operand size is 64)\n", VIRTUAL_ADDRESS);
+					if (!SuppressErrors) DISASM_ANOMALY(L"use of REX.w is meaningless (default operand size is 64)");
 					Instruction->AnomalyOccurred = TRUE;
 				}
 				X86Instruction->rex_b &= ~8;
@@ -1780,7 +1783,7 @@ HasSpecialExtension:
 				{
 					if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: REPNE should only be used with cmps/scas\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"REPNE should only be used with cmps/scas");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					// Treat it as just a "rep"
@@ -1793,7 +1796,7 @@ HasSpecialExtension:
 			default:
 				if (!Instruction->AnomalyOccurred)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Repeat prefix used with non-string instruction\n", VIRTUAL_ADDRESS);
+					if (!SuppressErrors) DISASM_ANOMALY(L"Repeat prefix used with non-string instruction");
 					Instruction->AnomalyOccurred = TRUE;
 				}
 				Instruction->Repeat = FALSE;
@@ -1844,7 +1847,7 @@ HasSpecialExtension:
 		InstructionLength = X86_GetLength(Instruction, Instruction->Address);
 		if (InstructionLength && Instruction->Length != InstructionLength)
 		{
-			printf("[0x%08I64X] WARNING: instruction lengths differ (%d vs %d)\n", VIRTUAL_ADDRESS, Instruction->Length, InstructionLength);
+			DISASM_ERROR(L"WARNING: instruction lengths differ (%d vs %d)", Instruction->Length, InstructionLength);
 			DumpInstruction(Instruction, TRUE, TRUE);
 			assert(0);
 		}
@@ -1869,7 +1872,7 @@ HasSpecialExtension:
 		{
 			if (!Instruction->AnomalyOccurred)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: address size prefix used with no addressing\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"address size prefix used with no addressing");
 				Instruction->AnomalyOccurred = TRUE;
 			}
 			X86Instruction->HasAddressSizePrefix = FALSE;
@@ -1879,7 +1882,7 @@ HasSpecialExtension:
 		{
 			if (!Instruction->AnomalyOccurred)
 			{
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: segment override used with no addressing\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"segment override used with no addressing");
 				Instruction->AnomalyOccurred = TRUE;
 			}
 			X86Instruction->HasSegmentOverridePrefix = FALSE;
@@ -1899,23 +1902,23 @@ HasSpecialExtension:
  					case ITYPE_IN: case ITYPE_STRMOV: case ITYPE_STRCMP: case ITYPE_STRSTOR:
 						break;
 					default:
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: use of unexpected segment ES\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"use of unexpected segment ES");
 						Instruction->AnomalyOccurred = TRUE;
 						break;
 				}
 				break;
 			case SEG_FS:
 				if (IS_X86_32() && !(Instruction->Groups & ITYPE_EXEC)) break;
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: use of unexpected segment FS\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"use of unexpected segment FS");
 				Instruction->AnomalyOccurred = TRUE;
 				break;
 			case SEG_GS:
 				if (IS_AMD64() && !(Instruction->Groups & ITYPE_EXEC)) break;
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: use of unexpected segment GS\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"use of unexpected segment GS");
 				Instruction->AnomalyOccurred = TRUE;
 				break;
 			default:
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: unexpected segment 0x%02X\n", VIRTUAL_ADDRESS, X86Instruction->Selector);
+				if (!SuppressErrors) DISASM_ANOMALY(L"unexpected segment 0x%02X", X86Instruction->Selector);
 				Instruction->AnomalyOccurred = TRUE;
 				break;
 		}
@@ -1931,7 +1934,7 @@ HasSpecialExtension:
 				case PREFIX_BRANCH_NOT_TAKEN:
 					if (!Instruction->AnomalyOccurred && X86Instruction->Segment != SEG_CS)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Segment override used with conditional branch\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Segment override used with conditional branch");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					X86Instruction->HasSegmentOverridePrefix = FALSE;
@@ -1941,7 +1944,7 @@ HasSpecialExtension:
 				case PREFIX_BRANCH_TAKEN:
 					if (!Instruction->AnomalyOccurred && X86Instruction->Segment != SEG_DS)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Segment override used with conditional branch\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Segment override used with conditional branch");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					X86Instruction->HasSegmentOverridePrefix = FALSE;
@@ -1958,7 +1961,7 @@ HasSpecialExtension:
 	if (X86Instruction->HasLockPrefix && 
 		!IsValidLockPrefix(X86Instruction, Opcode, Instruction->OpcodeLength, Group, OpcodeExtension))
 	{
-		if (!SuppressErrors) printf("[0x%08I64X] ERROR: Illegal use of lock prefix for instruction \"%s\"\n", VIRTUAL_ADDRESS, X86Opcode->Mnemonic);
+		if (!SuppressErrors) DISASM_ERROR(L"Illegal use of lock prefix for instruction \"%s\"", X86Opcode->Mnemonic);
 		goto abort;
 	}
 
@@ -2103,7 +2106,7 @@ HasSpecialExtension:
 
 	if (!Instruction->Length || Instruction->Length > X86_MAX_INSTRUCTION_LEN)
 	{
-		if (!SuppressErrors) printf("[0x%08I64X] ERROR: maximum instruction length reached (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+		if (!SuppressErrors) DISASM_ERROR(L"maximum instruction length reached (\"%s\")", X86Instruction->Opcode.Mnemonic);
 		goto abort;
 	}
 
@@ -2132,7 +2135,7 @@ HasSpecialExtension:
 			Operand1->TargetAddress >= (U64)Instruction->Address &&
 			Operand1->TargetAddress < (U64)Instruction->Address + Instruction->Length)
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: branch into the middle of an instruction\n", VIRTUAL_ADDRESS);
+			if (!SuppressErrors) DISASM_ANOMALY(L"branch into the middle of an instruction");
 			Instruction->AnomalyOccurred = TRUE;
 		}
 
@@ -2374,12 +2377,12 @@ HasSpecialExtension:
 				{
 					if (Instruction->Operands[1].Value_U64 & 3)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: ENTER has invalid operand 2\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"ENTER has invalid operand 2");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					if (Instruction->Operands[2].Value_U64 & ~0x1F)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: ENTER has invalid operand 3\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"ENTER has invalid operand 3");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 				}
@@ -2414,7 +2417,7 @@ HasSpecialExtension:
 					case 0xC2: // ret with 1 arg
 						if (!Instruction->AnomalyOccurred && (Operand1->Value_U64 & 3))
 						{
-							if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: ret has invalid operand 1\n", VIRTUAL_ADDRESS);
+							if (!SuppressErrors) DISASM_ANOMALY(L"ret has invalid operand 1");
 							Instruction->AnomalyOccurred = TRUE;
 						}
 						Instruction->StackChange += (LONG)Operand1->Value_U64;
@@ -2428,7 +2431,7 @@ HasSpecialExtension:
 					case 0xCA: // far ret with 1 arg
 						if (!Instruction->AnomalyOccurred && (Operand1->Value_U64 & 3))
 						{
-							if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: retf has invalid operand 1\n", VIRTUAL_ADDRESS);
+							if (!SuppressErrors) DISASM_ANOMALY(L"retf has invalid operand 1");
 							Instruction->AnomalyOccurred = TRUE;
 						}
 						Instruction->StackChange *= 2; // account for segment
@@ -2452,7 +2455,7 @@ HasSpecialExtension:
 			default:
 				if (!Instruction->AnomalyOccurred)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Instruction \"%s\" is modifying the stack\n", VIRTUAL_ADDRESS, X86Opcode->Mnemonic);
+					if (!SuppressErrors) DISASM_ANOMALY(L"Instruction \"%s\" is modifying the stack", X86Opcode->Mnemonic);
 					Instruction->AnomalyOccurred = TRUE;
 				}
 				break;
@@ -2461,7 +2464,7 @@ HasSpecialExtension:
 		if (!Instruction->AnomalyOccurred &&
 			((X86Instruction->OperandSize != 2 && (Instruction->StackChange & 3)) || (Instruction->StackChange & 1)))
 		{
-			if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: \"%s\" has invalid stack change 0x%02X\n", VIRTUAL_ADDRESS, X86Opcode->Mnemonic, Instruction->StackChange);
+			if (!SuppressErrors) DISASM_ANOMALY(L"\"%s\" has invalid stack change 0x%02X", X86Opcode->Mnemonic, Instruction->StackChange);
 			Instruction->AnomalyOccurred = TRUE;
 		}
 	}
@@ -3257,7 +3260,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				break;
 
 			case OPTYPE_cpu:
-				if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Undocumented loadall instruction?\n", VIRTUAL_ADDRESS);
+				if (!SuppressErrors) DISASM_ANOMALY(L"Undocumented loadall instruction?");
 				Instruction->AnomalyOccurred = TRUE;
 				Operand->Length = 204;
 				//DISASM_OUTPUT(("[SetOperand] OPTYPE_cpu (size 204)\n"));
@@ -3296,7 +3299,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 			case OPTYPE_p: // 32-bit or 48-bit pointer depending on operand size
 				if (!Instruction->AnomalyOccurred && X86Instruction->HasSegmentOverridePrefix)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Segment override used when segment is explicit\n", VIRTUAL_ADDRESS);
+					if (!SuppressErrors) DISASM_ANOMALY(L"Segment override used when segment is explicit");
 					Instruction->AnomalyOccurred = TRUE;
 				}
 				switch (X86Instruction->OperandSize)
@@ -3557,7 +3560,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 
 					if ((Operand->Flags & OP_COND) && !X86Instruction->Displacement)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: Both conditions of branch go to same address\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"Both conditions of branch go to same address");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 				}
@@ -3698,7 +3701,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				{
 					if (!Instruction->AnomalyOccurred)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ANOMALY: segment override used with AMODE_Y\n", VIRTUAL_ADDRESS);
+						if (!SuppressErrors) DISASM_ANOMALY(L"segment override used with AMODE_Y");
 						Instruction->AnomalyOccurred = TRUE;
 					}
 					Segment = X86Instruction->DstSegment = SEG_ES;
@@ -3727,17 +3730,17 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (modrm.mod != 3)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: mod != 3 for AMODE_PR (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"mod != 3 for AMODE_PR (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				else if (rex_modrm.rm > 7)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: invalid mmx register %d for AMODE_PR (\"%s\")\n", VIRTUAL_ADDRESS, rex_modrm.rm, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"invalid mmx register %d for AMODE_PR (\"%s\")", rex_modrm.rm, X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				else if (X86Instruction->OperandSize == 2)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: AMODE_PR illegal in 16-bit mode (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"AMODE_PR illegal in 16-bit mode (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				if (!Decode) continue;
@@ -3759,12 +3762,12 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (modrm.mod != 3)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: mod != 3 for AMODE_VR (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"mod != 3 for AMODE_VR (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				else if (X86Instruction->OperandSize == 2)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: AMODE_VR illegal in 16-bit mode (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"AMODE_VR illegal in 16-bit mode (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				if (!Decode) continue;
@@ -3785,12 +3788,12 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (rex_modrm.reg > 7)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: invalid mmx register %d for AMODE_P (\"%s\")\n", VIRTUAL_ADDRESS, rex_modrm.reg, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"invalid mmx register %d for AMODE_P (\"%s\")", rex_modrm.reg, X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				else if (X86Instruction->OperandSize == 2)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: AMODE_P illegal in 16-bit mode (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"AMODE_P illegal in 16-bit mode (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				if (!Decode) continue;
@@ -3811,7 +3814,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (X86Instruction->OperandSize == 2)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: AMODE_P illegal in 16-bit mode (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"AMODE_P illegal in 16-bit mode (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				if (!Decode) continue;
@@ -3832,7 +3835,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (modrm.mod != 3)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: mod != 3 for AMODE_R (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"mod != 3 for AMODE_R (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				if (!Decode) continue;
@@ -3995,7 +3998,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (modrm.mod == 3)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: mod = 3 for AMODE_M (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"mod = 3 for AMODE_M (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 				assert(X86Instruction->Segment == SEG_DS || X86Instruction->HasSegmentOverridePrefix);
@@ -4008,7 +4011,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				assert(X86Instruction->HasModRM);
 				if (OperandType == OPTYPE_p && modrm.mod == 3)
 				{
-					if (!SuppressErrors) printf("[0x%08I64X] ERROR: mod = 3 for AMODE_E with OPTYPE_p (\"%s\")\n", VIRTUAL_ADDRESS, X86Instruction->Opcode.Mnemonic);
+					if (!SuppressErrors) DISASM_ERROR(L"mod = 3 for AMODE_E with OPTYPE_p (\"%s\")", X86Instruction->Opcode.Mnemonic);
 					goto abort;
 				}
 
@@ -4029,7 +4032,7 @@ INTERNAL U8 *SetOperands(INSTRUCTION *Instruction, U8 *Address, U32 Flags)
 				{
 					if (rex_modrm.rm > 7)
 					{
-						if (!SuppressErrors) printf("[0x%08I64X] ERROR: invalid mmx register %d for AMODE_P (\"%s\")\n", VIRTUAL_ADDRESS, rex_modrm.rm, X86Instruction->Opcode.Mnemonic);
+						if (!SuppressErrors) DISASM_ERROR(L"invalid mmx register %d for AMODE_P (\"%s\")", rex_modrm.rm, X86Instruction->Opcode.Mnemonic);
 						goto abort;
 					}
 					Operand->Register = X86_MMX_OFFSET + rex_modrm.rm;
