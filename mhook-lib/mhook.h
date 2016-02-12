@@ -24,5 +24,5 @@
 #define _M_IX86_X64
 #endif
 
-BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction);
-BOOL Mhook_Unhook(PVOID *ppHookedFunction);
+EXTERN_C BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction);
+EXTERN_C BOOL Mhook_Unhook(PVOID *ppHookedFunction);

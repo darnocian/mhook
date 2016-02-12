@@ -771,7 +771,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 }
 
 //=========================================================================
-BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
+extern "C" BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
 	MHOOKS_TRAMPOLINE* pTrampoline = NULL;
 	PVOID pSystemFunction = *ppSystemFunction;
 	// ensure thread-safety
@@ -883,7 +883,7 @@ BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
 }
 
 //=========================================================================
-BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
+extern "C" BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
 	ODPRINTF((L"mhooks: Mhook_Unhook: %p", *ppHookedFunction));
 	BOOL bRet = FALSE;
 	EnterCritSec();
