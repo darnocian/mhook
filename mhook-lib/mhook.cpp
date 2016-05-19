@@ -684,9 +684,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		while ( (dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags)) ) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
 			if (pins->Type == ITYPE_RET		) break;
-			if (pins->Type == ITYPE_BRANCH	) break;
 			if (pins->Type == ITYPE_BRANCHCC) break;
-			if (pins->Type == ITYPE_CALL	) break;
 			if (pins->Type == ITYPE_CALLCC	) break;
 
 			#if defined _M_X64
@@ -697,7 +695,6 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					(pins->Operands[1].Flags & OP_IPREL) && (pins->Operands[1].Register == AMD64_REG_RIP))
 				{
 					// rip-addressing "mov reg, [rip+imm32]"
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 1, pins->X86.Displacement, *(PDWORD)(pLoc+3)));
 					bProcessRip = TRUE;
 				}
 				// mov or lea to rip+imm32 from register
@@ -706,7 +703,14 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					(pins->Operands[0].Flags & OP_IPREL) && (pins->Operands[0].Register == AMD64_REG_RIP))
 				{
 					// rip-addressing "mov [rip+imm32], reg"
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 0, pins->X86.Displacement, *(PDWORD)(pLoc+3)));
+					bProcessRip = TRUE;
+				}
+				// call to rip+imm32 or jmp to rip+imm32
+				else if ((pins->Type == ITYPE_CALL || pins->Type == ITYPE_BRANCH) && (pins->X86.Relative) &&
+					(pins->X86.OperandSize == 8) && (pins->OperandCount == 1) &&
+					(pins->Operands[0].Flags & OP_IPREL))
+				{
+					// rip-addressing "call [rip+imm32]" or jmp [rip+imm32]
 					bProcessRip = TRUE;
 				}
 				else if ( (pins->OperandCount >= 1) && (pins->Operands[0].Flags & OP_IPREL) )
@@ -741,6 +745,9 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 				}
 				// follow through with RIP-processing if needed
 				if (bProcessRip) {
+					// calculate displacement relative to this instruction start( Prefix + Opcode + the other Operand )
+					int nDisplacementPos = pins->PrefixCount + pins->OpcodeLength + (pins->OperandCount - 1);
+					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 1, pins->X86.Displacement, *(PDWORD)(pLoc + nDisplacementPos)));
 					// calculate displacement relative to function start
 					S64 nAdjustedDisplacement = pins->X86.Displacement + (pLoc - (U8*)pFunction);
 					// store displacement values furthest from zero (both positive and negative)
@@ -750,7 +757,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 						pdata->nLimitUp = nAdjustedDisplacement;
 					// store patch info
 					if (pdata->nRipCnt < MHOOKS_MAX_RIPS) {
-						pdata->rips[pdata->nRipCnt].dwOffset = dwRet + 3;
+						pdata->rips[pdata->nRipCnt].dwOffset = dwRet + nDisplacementPos;
 						pdata->rips[pdata->nRipCnt].nDisplacement = pins->X86.Displacement;
 						pdata->nRipCnt++;
 					} else {
