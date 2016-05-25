@@ -352,11 +352,18 @@ static void InitBlock(MHOOKS_TRAMPOLINE* pBlock, const ptrdiff_t cAllocSize){
 // near as possible to the specified function.
 //=========================================================================
 static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE pbUpper) {
-	SYSTEM_INFO sSysInfo =  {0};
-	::GetSystemInfo(&sSysInfo);
+	static DWORD gs_dwAllocGran = 0;
+
+	if (gs_dwAllocGran == 0) {
+		// Set allocation granularity if this is the first call
+		SYSTEM_INFO sSysInfo =  {0};
+		::GetSystemInfo(&sSysInfo);
+
+		gs_dwAllocGran = sSysInfo.dwAllocationGranularity;
+	}
 
 	// Always allocate in bulk, in case the system actually has a smaller allocation granularity than MINALLOCSIZE.
-	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
+	const ptrdiff_t cAllocSize = max(gs_dwAllocGran, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
 
