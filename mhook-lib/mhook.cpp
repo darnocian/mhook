@@ -321,6 +321,33 @@ static size_t RoundDown(size_t addr, size_t rndDown)
 //=========================================================================
 // Internal function:
 //
+// Initalize the block as a doubly linked list.
+//=========================================================================
+static void InitBlock(MHOOKS_TRAMPOLINE* pBlock, const ptrdiff_t cAllocSize){
+	size_t trampolineCount = cAllocSize / sizeof(MHOOKS_TRAMPOLINE);
+	ODPRINTF((L"mhooks: BlockAlloc: Allocated block at %p as %d trampolines", pBlock, trampolineCount));
+
+	pBlock[0].pPrevTrampoline = NULL;
+	pBlock[0].pNextTrampoline = &pBlock[1];
+
+	// prepare them by having them point down the line at the next entry.
+	for (size_t s = 1; s < trampolineCount; ++s) {
+		pBlock[s].pPrevTrampoline = &pBlock[s - 1];
+		pBlock[s].pNextTrampoline = &pBlock[s + 1];
+	}
+
+	// last entry points to the current head of the free list
+	pBlock[trampolineCount - 1].pNextTrampoline = g_pFreeList;
+
+	if (g_pFreeList) {
+		g_pFreeList->pPrevTrampoline = &pBlock[trampolineCount - 1];
+	}
+}
+
+
+//=========================================================================
+// Internal function:
+//
 // Will attempt allocate a block of memory within the specified range, as 
 // near as possible to the specified function.
 //=========================================================================
@@ -332,6 +359,18 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
+
+	// Try to allocate directly, If target function is in 0x10000~0x80000000.
+	if ( (ptrdiff_t)pbLower < 0x10000 ){
+		pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(NULL, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (pRetVal && pbLower < (PBYTE)pRetVal && (PBYTE)pRetVal < pbUpper) {
+			InitBlock(pRetVal, cAllocSize);
+			return pRetVal;
+		}
+	}
+
+	pRetVal = NULL;
+
 	PBYTE pModuleGuess = (PBYTE) RoundDown((size_t)pSystemFunction, cAllocSize);
 	int loopCount = 0;
 	for (PBYTE pbAlloc = pModuleGuess; pbLower < pbAlloc && pbAlloc < pbUpper; ++loopCount) {
@@ -345,24 +384,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 			// and then try to allocate it
 			pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 			if (pRetVal) {
-				size_t trampolineCount = cAllocSize / sizeof(MHOOKS_TRAMPOLINE);
-				ODPRINTF((L"mhooks: BlockAlloc: Allocated block at %p as %d trampolines", pRetVal, trampolineCount));
-
-				pRetVal[0].pPrevTrampoline = NULL;
-				pRetVal[0].pNextTrampoline = &pRetVal[1];
-
-				// prepare them by having them point down the line at the next entry.
-				for (size_t s = 1; s < trampolineCount; ++s) {
-					pRetVal[s].pPrevTrampoline = &pRetVal[s - 1];
-					pRetVal[s].pNextTrampoline = &pRetVal[s + 1];
-				}
-
-				// last entry points to the current head of the free list
-				pRetVal[trampolineCount - 1].pNextTrampoline = g_pFreeList;
-
-				if (g_pFreeList) {
-					g_pFreeList->pPrevTrampoline = &pRetVal[trampolineCount - 1];
-				}
+				InitBlock(pRetVal, cAllocSize);
 				break;
 			}
 		}
@@ -378,7 +400,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 //=========================================================================
 // Internal function:
 //
-// Will try to allocate a big block of memory inside the required range. 
+// Will try to find a trampoline entry from free list inside the required range. 
 //=========================================================================
 static MHOOKS_TRAMPOLINE* FindTrampolineInRange(PBYTE pLower, PBYTE pUpper) {
 	if (!g_pFreeList) {
