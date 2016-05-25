@@ -370,9 +370,12 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 	// Try to allocate directly, If target function is in 0x10000~0x80000000.
 	if ( (ptrdiff_t)pbLower < 0x10000 ){
 		pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(NULL, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-		if (pRetVal && pbLower < (PBYTE)pRetVal && (PBYTE)pRetVal < pbUpper) {
-			InitBlock(pRetVal, cAllocSize);
-			return pRetVal;
+		if (pRetVal) {
+			if (pbLower < (PBYTE)pRetVal && (PBYTE)pRetVal < pbUpper) {
+				InitBlock(pRetVal, cAllocSize);
+				return pRetVal;
+			}
+			VirtualFree(pRetVal, 0, MEM_RELEASE);
 		}
 	}
 
@@ -756,8 +759,8 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
 			{
 				// rip-addressing  "jmp [rip+imm32]"
-				if (pins->Length >= 5) 
-				{	
+				if (pins->Length >= 5)
+				{
 					bProcessRip = TRUE;
 				}
 				else
