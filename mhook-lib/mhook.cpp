@@ -373,25 +373,50 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 
 	PBYTE pModuleGuess = (PBYTE) RoundDown((size_t)pSystemFunction, cAllocSize);
 	int loopCount = 0;
-	for (PBYTE pbAlloc = pModuleGuess; pbLower < pbAlloc && pbAlloc < pbUpper; ++loopCount) {
-		// determine current state
-		MEMORY_BASIC_INFORMATION mbi;
-		ODPRINTF((L"mhooks: BlockAlloc: Looking at address %p", pbAlloc));
-		if (!VirtualQuery(pbAlloc, &mbi, sizeof(mbi)))
-			break;
-		// free & large enough?
-		if (mbi.State == MEM_FREE && mbi.RegionSize >= (unsigned)cAllocSize) {
-			// and then try to allocate it
-			pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-			if (pRetVal) {
-				InitBlock(pRetVal, cAllocSize);
+
+	ptrdiff_t spiral = 1;
+	bool bSpiral = true;
+	for (PBYTE pbAlloc = pModuleGuess;; ++loopCount) {
+		
+		if (pbLower < pbAlloc && pbAlloc < pbUpper) {
+			// determine current state
+			MEMORY_BASIC_INFORMATION mbi;
+			ODPRINTF((L"mhooks: BlockAlloc: Looking at address %p", pbAlloc));
+			if (!VirtualQuery(pbAlloc, &mbi, sizeof(mbi)))
 				break;
+			// free & large enough?
+			if (mbi.State == MEM_FREE && mbi.RegionSize >= (unsigned)cAllocSize) {
+				// and then try to allocate it
+				pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+				if (pRetVal) {
+					InitBlock(pRetVal, cAllocSize);
+					break;
+				}
 			}
 		}
-				
-		// This is a spiral, should be -1, 1, -2, 2, -3, 3, etc. (* cAllocSize)
-		ptrdiff_t bytesToOffset = (cAllocSize * (loopCount + 1) * ((loopCount % 2 == 0) ? -1 : 1));
-		pbAlloc = pbAlloc + bytesToOffset;
+		else if (!bSpiral)
+			break;
+
+		ptrdiff_t bytesToOffset = cAllocSize;
+		if (bSpiral) {
+			if (pbLower < pbAlloc && pbAlloc < pbUpper){
+				// This is a spiral, should be -1, 2, -3, 4, etc. (* cAllocSize)
+				// -1 or 1
+				spiral = ((loopCount % 2 == 0) ? -1 : 1);
+			}
+			else if ( pbLower < pbAlloc){
+				bSpiral = false;
+				spiral = -1;
+			}
+			else if ( pbAlloc < pbUpper){
+				bSpiral = false;
+				spiral = 1;
+			}
+			// 1, 2, 3, 4, etc. (* cAllocSize)
+			bytesToOffset = (cAllocSize * (loopCount+1));
+		}
+		// maybe a spiral, -1, 2, -3, 4, etc. (* cAllocSize) or just right or left
+		pbAlloc = pbAlloc + bytesToOffset * spiral;
 	}
 	
 	return pRetVal;
