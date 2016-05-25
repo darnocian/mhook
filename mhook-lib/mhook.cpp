@@ -819,8 +819,8 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 
 			// follow through with RIP-processing if needed
 			if (bProcessRip) {
-				// calculate displacement relative to this instruction start( Prefix + Opcode + the other Operand )
-				int nDisplacementPos = pins->PrefixCount + pins->OpcodeLength + (pins->OperandCount - 1);
+				// calculate displacement relative to this instruction start( Prefix + Opcode + ModR/M(if required) + SIB(if required) )
+				int nDisplacementPos = pins->PrefixCount + pins->OpcodeLength + pins->X86.HasModRM + (pins->X86.sib_b == 0?0:1);
 				ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 1, pins->X86.Displacement, *(PDWORD)(pLoc + nDisplacementPos)));
 				// calculate displacement relative to function start
 				S64 nAdjustedDisplacement = pins->X86.Displacement + (pLoc - (U8*)pFunction);
