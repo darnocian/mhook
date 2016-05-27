@@ -57,6 +57,10 @@ typedef BOOL(WINAPI* _OpenPrinterW)(
 	_In_  LPPRINTER_DEFAULTS pDefault);
 
 //=========================================================================
+// Define _GetFocus so we can dynamically bind to the function
+typedef HWND(WINAPI*_GetFocus)();
+
+//=========================================================================
 // Get the current (original) address to the functions to be hooked
 //
 _NtOpenProcess TrueNtOpenProcess = (_NtOpenProcess)
@@ -74,6 +78,8 @@ _NtClose TrueNtClose = (_NtClose)GetProcAddress(GetModuleHandleW(L"ntdll"), "NtC
 // This also checks that we can follow the jump in the import stub.
 _OpenPrinterW TrueOpenPrinterW = &OpenPrinterW;
 
+// check unconditional short jmp
+_GetFocus  TrueGetFocus  = &GetFocus;
 //=========================================================================
 // This is the function that will replace NtOpenProcess once the hook 
 // is in place
@@ -137,6 +143,16 @@ BOOL WINAPI HookOpenPrinterW(
 {
 	printf("***** Call to HookOpenPrinterW(\"%ls\", 0x%p, 0x%p)\n", pPrinterName, phPrinter, pDefault);
 	return TrueOpenPrinterW(pPrinterName, phPrinter, pDefault);
+}
+
+//=========================================================================
+// This is the function that will replace GetFocus once the hook
+// is in place
+//
+HWND WINAPI HookGetFocus(void)
+{
+	printf("***** Call to GetFocus()\n");
+	return TrueGetFocus();
 }
 
 //=========================================================================
@@ -244,7 +260,13 @@ int wmain(int argc, WCHAR* argv[])
 			ClosePrinter(printer);
 		Mhook_Unhook((PVOID*)&TrueOpenPrinterW);
 	}
-
+	
+	printf("Testing GetFocus.\n");
+	if (Mhook_SetHook((PVOID*)&TrueGetFocus, HookGetFocus))
+	{
+		printf("Focused windows: %08X \n", GetFocus());
+		Mhook_Unhook((PVOID*)&TrueGetFocus);
+	}
 	return 0;
 }
 
