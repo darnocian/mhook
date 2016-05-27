@@ -121,6 +121,15 @@ struct MHOOKS_RIPINFO
 {
 	DWORD	dwOffset;
 	S64		nDisplacement;
+
+	// new instruction
+	DWORD   dwInstructionOffset;
+	BYTE    pbInstruction[64];
+	DWORD   dwInstructionLength;
+
+	// old instruction
+	DWORD   dwOldInstructionOffset;
+	DWORD   dwOldInstructionLength;
 };
 
 struct MHOOKS_PATCHDATA
@@ -698,18 +707,46 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 //=========================================================================
 // if IP-relative addressing has been detected, fix up the code so the
 // offset points to the original location
-static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATCHDATA* pdata)
+// return a extended code length after fixup
+static DWORD FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATCHDATA* pdata)
 {
+	DWORD dwRet = 0;
+
 	S64 diff = pbNew - pbOriginal;
 	for (DWORD i = 0; i < pdata->nRipCnt; i++) {
-		DWORD dwNewDisplacement = (DWORD)(pdata->rips[i].nDisplacement - diff);
+		MHOOKS_RIPINFO rip = pdata->rips[i];
+
+		DWORD dwNewDisplacement = (DWORD)(rip.nDisplacement - diff);
+
+		if (rip.dwInstructionLength > rip.dwOldInstructionLength){
+
+			DWORD dwExtend = rip.dwInstructionOffset + rip.dwInstructionLength - rip.dwOldInstructionOffset - rip.dwOldInstructionLength;
+			
+			// move other instructions backward
+			for (int j = MHOOKS_MAX_CODE_BYTES - 1; j >= rip.dwInstructionOffset + rip.dwOldInstructionLength + dwExtend; j--){
+				pbNew[j] = pbNew[j - dwExtend];
+			}
+			// fixing up instruction
+			for (int p = 0; p < rip.dwInstructionLength; p++){
+				*PBYTE(pbNew+rip.dwInstructionOffset+p) = rip.pbInstruction[p];
+			}
+
+			// fixing up RIP instruction operand
+			dwNewDisplacement -= dwExtend;
+
+			dwRet += rip.dwInstructionLength - rip.dwOldInstructionLength;
+		}
+
 		ODPRINTF((L"mhooks: fixing up RIP instruction operand for code at 0x%p: "
 			L"old displacement: 0x%8.8x, new displacement: 0x%8.8x", 
-			pbNew + pdata->rips[i].dwOffset, 
-			(DWORD)pdata->rips[i].nDisplacement, 
+			pbNew + rip.dwInstructionOffset + rip.dwOffset, 
+			(DWORD)rip.nDisplacement, 
 			dwNewDisplacement));
-		*(PDWORD)(pbNew + pdata->rips[i].dwOffset) = dwNewDisplacement;
+
+		*(PDWORD)(pbNew + rip.dwInstructionOffset + rip.dwOffset) = dwNewDisplacement; 
 	}
+
+	return dwRet;
 }
 
 //=========================================================================
@@ -721,6 +758,8 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 // that we can patch.
 static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata) {
 	DWORD dwRet = 0;
+	DWORD dwInsLength = 0;
+
 	pdata->nLimitDown = 0;
 	pdata->nLimitUp = 0;
 	pdata->nRipCnt = 0;
@@ -741,7 +780,6 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		while ( (dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags)) ) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
 			if (pins->Type == ITYPE_RET		) break;
-			if (pins->Type == ITYPE_BRANCHCC) break;
 			if (pins->Type == ITYPE_CALLCC	) break;
 
 			BOOL bProcessRip = FALSE;
@@ -759,17 +797,13 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
 			{
 				// rip-addressing  "jmp [rip+imm32]"
-				if (pins->Length >= 5)
-				{
-					bProcessRip = TRUE;
-				}
-				else
-				{
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL JMP "));
-					// TODO short jmp
-					break;
-				}
-				
+				bProcessRip = TRUE;
+			}
+			else if ((pins->Type == ITYPE_BRANCHCC) && (pins->X86.Relative) &&
+				(pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL) &&
+				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
+			{
+				bProcessRip = TRUE;
 			}
 #if defined _M_X64
 			// mov or lea to register from rip+imm32 
@@ -820,6 +854,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 				break;
 			}
 
+			DWORD dwInstructionLength = pins->Length;
 			// follow through with RIP-processing if needed
 			if (bProcessRip) {
 				// calculate displacement relative to this instruction start( Prefix + Opcode + ModR/M(if required) + SIB(if required) )
@@ -834,8 +869,53 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					pdata->nLimitUp = nAdjustedDisplacement;
 				// store patch info
 				if (pdata->nRipCnt < MHOOKS_MAX_RIPS) {
-					pdata->rips[pdata->nRipCnt].dwOffset = dwRet + nDisplacementPos;
+
+					pdata->rips[pdata->nRipCnt].dwOffset = nDisplacementPos;
 					pdata->rips[pdata->nRipCnt].nDisplacement = pins->X86.Displacement;
+
+					pdata->rips[pdata->nRipCnt].dwOldInstructionOffset = dwRet;
+					pdata->rips[pdata->nRipCnt].dwOldInstructionLength = pins->Length;
+
+					pdata->rips[pdata->nRipCnt].dwInstructionOffset = dwInsLength;
+					pdata->rips[pdata->nRipCnt].dwInstructionLength = pins->Length;
+
+					// short condition jmp
+					if (pins->Type == ITYPE_BRANCHCC && pins->Length == 2){
+						// jne jnz
+						if ( pins->OpcodeAddress[0] == 0x75 ){ 
+							// store a new instruction to replace the old one
+							pdata->rips[pdata->nRipCnt].dwInstructionLength = 6;
+							// a new Displacement offset in new instruction
+							pdata->rips[pdata->nRipCnt].dwOffset = 2;
+							BYTE tmp[6] = {0x0F, 0x85, 0};
+							for(int i=0; i < MAX_OPCODE_LENGTH; i++){
+								pdata->rips[pdata->nRipCnt].pbInstruction[i] = tmp[i];
+							}
+						}
+						else
+							// todo unsupport short condition jmp for now
+							break;
+					}
+					// short uncondition jmp
+					else if (pins->Type == ITYPE_BRANCH && pins->Length == 2){
+						// jmp
+						if (pins->OpcodeAddress[0] == 0xEB){ 
+							// store a new instruction to replace the old one
+							pdata->rips[pdata->nRipCnt].dwInstructionLength = 5;
+							// a new Displacement offset in new instruction
+							pdata->rips[pdata->nRipCnt].dwOffset = 1;
+							BYTE tmp[5] = {0xE9, 0};
+							for(int i=0; i < MAX_OPCODE_LENGTH; i++){
+								pdata->rips[pdata->nRipCnt].pbInstruction[i] = tmp[i];
+							}
+						}
+						else
+							// todo unsupport short uncondition jmp for now
+							break;
+					}
+					
+					dwInstructionLength = pdata->rips[pdata->nRipCnt].dwInstructionLength;
+
 					pdata->nRipCnt++;
 				}
 				else {
@@ -843,6 +923,9 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					break;
 				}
 			}
+
+			dwInsLength += dwInstructionLength;
+			
 			dwRet += pins->Length;
 			pLoc  += pins->Length;
 		}
@@ -892,13 +975,14 @@ extern "C" BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
 					for (DWORD i = 0; i<dwInstructionLength; i++) {
 						pTrampoline->codeUntouched[i] = pbCode[i] = ((PBYTE)pSystemFunction)[i];
 					}
+
 					pbCode += dwInstructionLength;
+					// fix up any IP-relative addressing in the code
+					pbCode += FixupIPRelativeAddressing(pTrampoline->codeTrampoline, (PBYTE)pSystemFunction, &patchdata);
+					
 					// plus a jump to the continuation in the original location
 					pbCode = EmitJump(pbCode, ((PBYTE)pSystemFunction) + dwInstructionLength);
 					ODPRINTF((L"mhooks: Mhook_SetHook: updated the trampoline"));
-
-					// fix up any IP-relative addressing in the code
-					FixupIPRelativeAddressing(pTrampoline->codeTrampoline, (PBYTE)pSystemFunction, &patchdata);
 
 					DWORD_PTR dwDistance = (PBYTE)pHookFunction < (PBYTE)pSystemFunction ? 
 						(PBYTE)pSystemFunction - (PBYTE)pHookFunction : (PBYTE)pHookFunction - (PBYTE)pSystemFunction;
