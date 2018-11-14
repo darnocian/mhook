@@ -121,6 +121,15 @@ struct MHOOKS_RIPINFO
 {
 	DWORD	dwOffset;
 	S64		nDisplacement;
+
+	// new instruction
+	DWORD   dwInstructionOffset;
+	BYTE    pbInstruction[64];
+	DWORD   dwInstructionLength;
+
+	// old instruction
+	DWORD   dwOldInstructionOffset;
+	DWORD   dwOldInstructionLength;
 };
 
 struct MHOOKS_PATCHDATA
@@ -321,55 +330,112 @@ static size_t RoundDown(size_t addr, size_t rndDown)
 //=========================================================================
 // Internal function:
 //
+// Initalize the block as a doubly linked list.
+//=========================================================================
+static void InitBlock(MHOOKS_TRAMPOLINE* pBlock, const ptrdiff_t cAllocSize){
+	size_t trampolineCount = cAllocSize / sizeof(MHOOKS_TRAMPOLINE);
+	ODPRINTF((L"mhooks: BlockAlloc: Allocated block at %p as %d trampolines", pBlock, trampolineCount));
+
+	pBlock[0].pPrevTrampoline = NULL;
+	pBlock[0].pNextTrampoline = &pBlock[1];
+
+	// prepare them by having them point down the line at the next entry.
+	for (size_t s = 1; s < trampolineCount; ++s) {
+		pBlock[s].pPrevTrampoline = &pBlock[s - 1];
+		pBlock[s].pNextTrampoline = &pBlock[s + 1];
+	}
+
+	// last entry points to the current head of the free list
+	pBlock[trampolineCount - 1].pNextTrampoline = g_pFreeList;
+
+	if (g_pFreeList) {
+		g_pFreeList->pPrevTrampoline = &pBlock[trampolineCount - 1];
+	}
+}
+
+
+//=========================================================================
+// Internal function:
+//
 // Will attempt allocate a block of memory within the specified range, as 
 // near as possible to the specified function.
 //=========================================================================
 static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE pbUpper) {
-	SYSTEM_INFO sSysInfo =  {0};
-	::GetSystemInfo(&sSysInfo);
+	static DWORD gs_dwAllocGran = 0;
+
+	if (gs_dwAllocGran == 0) {
+		// Set allocation granularity if this is the first call
+		SYSTEM_INFO sSysInfo =  {0};
+		::GetSystemInfo(&sSysInfo);
+
+		gs_dwAllocGran = sSysInfo.dwAllocationGranularity;
+	}
 
 	// Always allocate in bulk, in case the system actually has a smaller allocation granularity than MINALLOCSIZE.
-	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
+	const ptrdiff_t cAllocSize = max(gs_dwAllocGran, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
+
+	// Try to allocate directly, If target function is in 0x10000~0x80000000.
+	if ( (ptrdiff_t)pbLower < 0x10000 ){
+		pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(NULL, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+		if (pRetVal) {
+			if (pbLower < (PBYTE)pRetVal && (PBYTE)pRetVal < pbUpper) {
+				InitBlock(pRetVal, cAllocSize);
+				return pRetVal;
+			}
+			VirtualFree(pRetVal, 0, MEM_RELEASE);
+		}
+	}
+
+	pRetVal = NULL;
+
 	PBYTE pModuleGuess = (PBYTE) RoundDown((size_t)pSystemFunction, cAllocSize);
 	int loopCount = 0;
-	for (PBYTE pbAlloc = pModuleGuess; pbLower < pbAlloc && pbAlloc < pbUpper; ++loopCount) {
-		// determine current state
-		MEMORY_BASIC_INFORMATION mbi;
-		ODPRINTF((L"mhooks: BlockAlloc: Looking at address %p", pbAlloc));
-		if (!VirtualQuery(pbAlloc, &mbi, sizeof(mbi)))
-			break;
-		// free & large enough?
-		if (mbi.State == MEM_FREE && mbi.RegionSize >= (unsigned)cAllocSize) {
-			// and then try to allocate it
-			pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-			if (pRetVal) {
-				size_t trampolineCount = cAllocSize / sizeof(MHOOKS_TRAMPOLINE);
-				ODPRINTF((L"mhooks: BlockAlloc: Allocated block at %p as %d trampolines", pRetVal, trampolineCount));
 
-				pRetVal[0].pPrevTrampoline = NULL;
-				pRetVal[0].pNextTrampoline = &pRetVal[1];
-
-				// prepare them by having them point down the line at the next entry.
-				for (size_t s = 1; s < trampolineCount; ++s) {
-					pRetVal[s].pPrevTrampoline = &pRetVal[s - 1];
-					pRetVal[s].pNextTrampoline = &pRetVal[s + 1];
-				}
-
-				// last entry points to the current head of the free list
-				pRetVal[trampolineCount - 1].pNextTrampoline = g_pFreeList;
-
-				if (g_pFreeList) {
-					g_pFreeList->pPrevTrampoline = &pRetVal[trampolineCount - 1];
-				}
+	ptrdiff_t spiral = 1;
+	bool bSpiral = true;
+	for (PBYTE pbAlloc = pModuleGuess;; ++loopCount) {
+		
+		if (pbLower < pbAlloc && pbAlloc < pbUpper) {
+			// determine current state
+			MEMORY_BASIC_INFORMATION mbi;
+			ODPRINTF((L"mhooks: BlockAlloc: Looking at address %p", pbAlloc));
+			if (!VirtualQuery(pbAlloc, &mbi, sizeof(mbi)))
 				break;
+			// free & large enough?
+			if (mbi.State == MEM_FREE && mbi.RegionSize >= (unsigned)cAllocSize) {
+				// and then try to allocate it
+				pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+				if (pRetVal) {
+					InitBlock(pRetVal, cAllocSize);
+					break;
+				}
 			}
 		}
-				
-		// This is a spiral, should be -1, 1, -2, 2, -3, 3, etc. (* cAllocSize)
-		ptrdiff_t bytesToOffset = (cAllocSize * (loopCount + 1) * ((loopCount % 2 == 0) ? -1 : 1));
-		pbAlloc = pbAlloc + bytesToOffset;
+		else if (!bSpiral)
+			break;
+
+		ptrdiff_t bytesToOffset = cAllocSize;
+		if (bSpiral) {
+			if (pbLower < pbAlloc && pbAlloc < pbUpper){
+				// This is a spiral, should be -1, 2, -3, 4, etc. (* cAllocSize)
+				// -1 or 1
+				spiral = ((loopCount % 2 == 0) ? -1 : 1);
+			}
+			else if ( pbLower < pbAlloc){
+				bSpiral = false;
+				spiral = -1;
+			}
+			else if ( pbAlloc < pbUpper){
+				bSpiral = false;
+				spiral = 1;
+			}
+			// 1, 2, 3, 4, etc. (* cAllocSize)
+			bytesToOffset = (cAllocSize * (loopCount+1));
+		}
+		// maybe a spiral, -1, 2, -3, 4, etc. (* cAllocSize) or just right or left
+		pbAlloc = pbAlloc + bytesToOffset * spiral;
 	}
 	
 	return pRetVal;
@@ -378,7 +444,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 //=========================================================================
 // Internal function:
 //
-// Will try to allocate a big block of memory inside the required range. 
+// Will try to find a trampoline entry from free list inside the required range. 
 //=========================================================================
 static MHOOKS_TRAMPOLINE* FindTrampolineInRange(PBYTE pLower, PBYTE pUpper) {
 	if (!g_pFreeList) {
@@ -464,16 +530,18 @@ static MHOOKS_TRAMPOLINE* TrampolineGet(PBYTE pHookedFunction) {
 //=========================================================================
 static VOID TrampolineFree(MHOOKS_TRAMPOLINE* pTrampoline, BOOL bNeverUsed) {
 	ListRemove(&g_pHooks, pTrampoline);
+	g_nHooksInUse--;
 
 	// If a thread could feasinbly have some of our trampoline code 
 	// on its stack and we yank the region from underneath it then it will
 	// surely crash upon returning. So instead of freeing the 
 	// memory we just let it leak. Ugly, but safe.
 	if (bNeverUsed) {
-		ListPrepend(&g_pFreeList, pTrampoline);
+		//VirtualFree(pTrampoline, 0, MEM_RELEASE);
+		return;
 	}
 
-	g_nHooksInUse--;
+	ListPrepend(&g_pFreeList, pTrampoline);
 }
 
 //=========================================================================
@@ -639,20 +707,46 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 //=========================================================================
 // if IP-relative addressing has been detected, fix up the code so the
 // offset points to the original location
-static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATCHDATA* pdata)
+// return a extended code length after fixup
+static DWORD FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATCHDATA* pdata)
 {
-#if defined _M_X64
+	DWORD dwRet = 0;
+
 	S64 diff = pbNew - pbOriginal;
 	for (DWORD i = 0; i < pdata->nRipCnt; i++) {
-		DWORD dwNewDisplacement = (DWORD)(pdata->rips[i].nDisplacement - diff);
+		MHOOKS_RIPINFO rip = pdata->rips[i];
+
+		DWORD dwNewDisplacement = (DWORD)(rip.nDisplacement - diff);
+
+		if (rip.dwInstructionLength > rip.dwOldInstructionLength){
+
+			DWORD dwExtend = rip.dwInstructionOffset + rip.dwInstructionLength - rip.dwOldInstructionOffset - rip.dwOldInstructionLength;
+			
+			// move other instructions backward
+			for (int j = MHOOKS_MAX_CODE_BYTES - 1; j >= rip.dwInstructionOffset + rip.dwOldInstructionLength + dwExtend; j--){
+				pbNew[j] = pbNew[j - dwExtend];
+			}
+			// fixing up instruction
+			for (int p = 0; p < rip.dwInstructionLength; p++){
+				*PBYTE(pbNew+rip.dwInstructionOffset+p) = rip.pbInstruction[p];
+			}
+
+			// fixing up RIP instruction operand
+			dwNewDisplacement -= dwExtend;
+
+			dwRet += rip.dwInstructionLength - rip.dwOldInstructionLength;
+		}
+
 		ODPRINTF((L"mhooks: fixing up RIP instruction operand for code at 0x%p: "
 			L"old displacement: 0x%8.8x, new displacement: 0x%8.8x", 
-			pbNew + pdata->rips[i].dwOffset, 
-			(DWORD)pdata->rips[i].nDisplacement, 
+			pbNew + rip.dwInstructionOffset + rip.dwOffset, 
+			(DWORD)rip.nDisplacement, 
 			dwNewDisplacement));
-		*(PDWORD)(pbNew + pdata->rips[i].dwOffset) = dwNewDisplacement;
+
+		*(PDWORD)(pbNew + rip.dwInstructionOffset + rip.dwOffset) = dwNewDisplacement; 
 	}
-#endif
+
+	return dwRet;
 }
 
 //=========================================================================
@@ -664,6 +758,8 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 // that we can patch.
 static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata) {
 	DWORD dwRet = 0;
+	DWORD dwInsLength = 0;
+
 	pdata->nLimitDown = 0;
 	pdata->nLimitUp = 0;
 	pdata->nRipCnt = 0;
@@ -684,82 +780,152 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		while ( (dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags)) ) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
 			if (pins->Type == ITYPE_RET		) break;
-			if (pins->Type == ITYPE_BRANCH	) break;
-			if (pins->Type == ITYPE_BRANCHCC) break;
-			if (pins->Type == ITYPE_CALL	) break;
 			if (pins->Type == ITYPE_CALLCC	) break;
 
-			#if defined _M_X64
-				BOOL bProcessRip = FALSE;
-				// mov or lea to register from rip+imm32
-				if ((pins->Type == ITYPE_MOV || pins->Type == ITYPE_LEA) && (pins->X86.Relative) && 
-					(pins->X86.OperandSize == 8) && (pins->OperandCount == 2) &&
-					(pins->Operands[1].Flags & OP_IPREL) && (pins->Operands[1].Register == AMD64_REG_RIP))
-				{
-					// rip-addressing "mov reg, [rip+imm32]"
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 1, pins->X86.Displacement, *(PDWORD)(pLoc+3)));
-					bProcessRip = TRUE;
+			BOOL bProcessRip = FALSE;
+			// call to rip+imm32 or eip+imm32
+			if ((pins->Type == ITYPE_CALL) && (pins->X86.Relative) &&
+				(pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL) &&
+				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
+			{
+				// rip-addressing "call [rip+imm32]"
+				bProcessRip = TRUE;
+			}
+			// jmp to rip+imm32 or eip+imm32
+			else if ((pins->Type == ITYPE_BRANCH) && (pins->X86.Relative) &&
+				(pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL) &&
+				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
+			{
+				// rip-addressing  "jmp [rip+imm32]"
+				bProcessRip = TRUE;
+			}
+			else if ((pins->Type == ITYPE_BRANCHCC) && (pins->X86.Relative) &&
+				(pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL) &&
+				((pins->Operands[0].Register == AMD64_REG_RIP) || (pins->Operands[0].Register == X86_REG_EIP)))
+			{
+				bProcessRip = TRUE;
+			}
+#if defined _M_X64
+			// mov or lea to register from rip+imm32 
+			else if ((pins->Type == ITYPE_MOV || pins->Type == ITYPE_LEA) && (pins->X86.Relative) &&
+				(pins->X86.OperandSize == 8) && (pins->OperandCount == 2) &&
+				(pins->Operands[1].Flags & OP_IPREL) && (pins->Operands[1].Register == AMD64_REG_RIP))
+			{
+				// rip-addressing "mov reg, [rip+imm32]"
+				bProcessRip = TRUE;
+			}
+			// mov or lea to rip+imm32 from register 
+			else if ((pins->Type == ITYPE_MOV || pins->Type == ITYPE_LEA) && (pins->X86.Relative) && 
+				(pins->X86.OperandSize == 8) && (pins->OperandCount == 2) &&
+				(pins->Operands[0].Flags & OP_IPREL) && (pins->Operands[0].Register == AMD64_REG_RIP))
+			{
+				// rip-addressing "mov [rip+imm32], reg"
+				bProcessRip = TRUE;
+			}
+#endif
+			else if ( (pins->OperandCount >= 1) && (pins->Operands[0].Flags & OP_IPREL) )
+			{
+				// unsupported rip-addressing
+				ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 0));
+				// dump instruction bytes to the debug output
+				for (DWORD i=0; i<pins->Length; i++) {
+					ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
 				}
-				// mov or lea to rip+imm32 from register
-				else if ((pins->Type == ITYPE_MOV || pins->Type == ITYPE_LEA) && (pins->X86.Relative) && 
-					(pins->X86.OperandSize == 8) && (pins->OperandCount == 2) &&
-					(pins->Operands[0].Flags & OP_IPREL) && (pins->Operands[0].Register == AMD64_REG_RIP))
-				{
-					// rip-addressing "mov [rip+imm32], reg"
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 0, pins->X86.Displacement, *(PDWORD)(pLoc+3)));
-					bProcessRip = TRUE;
+				break;
+			}
+			else if ( (pins->OperandCount >= 2) && (pins->Operands[1].Flags & OP_IPREL) )
+			{
+				// unsupported rip-addressing
+				ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 1));
+				// dump instruction bytes to the debug output
+				for (DWORD i=0; i<pins->Length; i++) {
+					ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
 				}
-				else if ( (pins->OperandCount >= 1) && (pins->Operands[0].Flags & OP_IPREL) )
-				{
-					// unsupported rip-addressing
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 0));
-					// dump instruction bytes to the debug output
-					for (DWORD i=0; i<pins->Length; i++) {
-						ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
-					}
-					break;
+				break;
+			}
+			else if ( (pins->OperandCount >= 3) && (pins->Operands[2].Flags & OP_IPREL) )
+			{
+				// unsupported rip-addressing
+				ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 2));
+				// dump instruction bytes to the debug output
+				for (DWORD i=0; i<pins->Length; i++) {
+					ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
 				}
-				else if ( (pins->OperandCount >= 2) && (pins->Operands[1].Flags & OP_IPREL) )
-				{
-					// unsupported rip-addressing
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 1));
-					// dump instruction bytes to the debug output
-					for (DWORD i=0; i<pins->Length; i++) {
-						ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
-					}
-					break;
-				}
-				else if ( (pins->OperandCount >= 3) && (pins->Operands[2].Flags & OP_IPREL) )
-				{
-					// unsupported rip-addressing
-					ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 2));
-					// dump instruction bytes to the debug output
-					for (DWORD i=0; i<pins->Length; i++) {
-						ODPRINTF((L"mhooks: DisassembleAndSkip: instr byte %2.2d: 0x%2.2x", i, pLoc[i]));
-					}
-					break;
-				}
-				// follow through with RIP-processing if needed
-				if (bProcessRip) {
-					// calculate displacement relative to function start
-					S64 nAdjustedDisplacement = pins->X86.Displacement + (pLoc - (U8*)pFunction);
-					// store displacement values furthest from zero (both positive and negative)
-					if (nAdjustedDisplacement < pdata->nLimitDown)
-						pdata->nLimitDown = nAdjustedDisplacement;
-					if (nAdjustedDisplacement > pdata->nLimitUp)
-						pdata->nLimitUp = nAdjustedDisplacement;
-					// store patch info
-					if (pdata->nRipCnt < MHOOKS_MAX_RIPS) {
-						pdata->rips[pdata->nRipCnt].dwOffset = dwRet + 3;
-						pdata->rips[pdata->nRipCnt].nDisplacement = pins->X86.Displacement;
-						pdata->nRipCnt++;
-					} else {
-						// no room for patch info, stop disassembly
-						break;
-					}
-				}
-			#endif
+				break;
+			}
 
+			DWORD dwInstructionLength = pins->Length;
+			// follow through with RIP-processing if needed
+			if (bProcessRip) {
+				// calculate displacement relative to this instruction start( Prefix + Opcode + ModR/M(if required) + SIB(if required) )
+				int nDisplacementPos = pins->PrefixCount + pins->OpcodeLength + pins->X86.HasModRM + (pins->X86.sib_b == 0?0:1);
+				ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 1, pins->X86.Displacement, *(PDWORD)(pLoc + nDisplacementPos)));
+				// calculate displacement relative to function start
+				S64 nAdjustedDisplacement = pins->X86.Displacement + (pLoc - (U8*)pFunction);
+				// store displacement values furthest from zero (both positive and negative)
+				if (nAdjustedDisplacement < pdata->nLimitDown)
+					pdata->nLimitDown = nAdjustedDisplacement;
+				if (nAdjustedDisplacement > pdata->nLimitUp)
+					pdata->nLimitUp = nAdjustedDisplacement;
+				// store patch info
+				if (pdata->nRipCnt < MHOOKS_MAX_RIPS) {
+
+					pdata->rips[pdata->nRipCnt].dwOffset = nDisplacementPos;
+					pdata->rips[pdata->nRipCnt].nDisplacement = pins->X86.Displacement;
+
+					pdata->rips[pdata->nRipCnt].dwOldInstructionOffset = dwRet;
+					pdata->rips[pdata->nRipCnt].dwOldInstructionLength = pins->Length;
+
+					pdata->rips[pdata->nRipCnt].dwInstructionOffset = dwInsLength;
+					pdata->rips[pdata->nRipCnt].dwInstructionLength = pins->Length;
+
+					// short condition jmp
+					if (pins->Type == ITYPE_BRANCHCC && pins->Length == 2){
+						// jne jnz
+						if ( pins->OpcodeAddress[0] == 0x75 ){ 
+							// store a new instruction to replace the old one
+							pdata->rips[pdata->nRipCnt].dwInstructionLength = 6;
+							// a new Displacement offset in new instruction
+							pdata->rips[pdata->nRipCnt].dwOffset = 2;
+							BYTE tmp[6] = {0x0F, 0x85, 0};
+							for(int i=0; i < MAX_OPCODE_LENGTH; i++){
+								pdata->rips[pdata->nRipCnt].pbInstruction[i] = tmp[i];
+							}
+						}
+						else
+							// todo unsupport short condition jmp for now
+							break;
+					}
+					// short uncondition jmp
+					else if (pins->Type == ITYPE_BRANCH && pins->Length == 2){
+						// jmp
+						if (pins->OpcodeAddress[0] == 0xEB){ 
+							// store a new instruction to replace the old one
+							pdata->rips[pdata->nRipCnt].dwInstructionLength = 5;
+							// a new Displacement offset in new instruction
+							pdata->rips[pdata->nRipCnt].dwOffset = 1;
+							BYTE tmp[5] = {0xE9, 0};
+							for(int i=0; i < MAX_OPCODE_LENGTH; i++){
+								pdata->rips[pdata->nRipCnt].pbInstruction[i] = tmp[i];
+							}
+						}
+						else
+							// todo unsupport short uncondition jmp for now
+							break;
+					}
+					
+					dwInstructionLength = pdata->rips[pdata->nRipCnt].dwInstructionLength;
+
+					pdata->nRipCnt++;
+				}
+				else {
+					// no room for patch info, stop disassembly
+					break;
+				}
+			}
+
+			dwInsLength += dwInstructionLength;
+			
 			dwRet += pins->Length;
 			pLoc  += pins->Length;
 		}
@@ -809,13 +975,14 @@ extern "C" BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
 					for (DWORD i = 0; i<dwInstructionLength; i++) {
 						pTrampoline->codeUntouched[i] = pbCode[i] = ((PBYTE)pSystemFunction)[i];
 					}
+
 					pbCode += dwInstructionLength;
+					// fix up any IP-relative addressing in the code
+					pbCode += FixupIPRelativeAddressing(pTrampoline->codeTrampoline, (PBYTE)pSystemFunction, &patchdata);
+					
 					// plus a jump to the continuation in the original location
 					pbCode = EmitJump(pbCode, ((PBYTE)pSystemFunction) + dwInstructionLength);
 					ODPRINTF((L"mhooks: Mhook_SetHook: updated the trampoline"));
-
-					// fix up any IP-relative addressing in the code
-					FixupIPRelativeAddressing(pTrampoline->codeTrampoline, (PBYTE)pSystemFunction, &patchdata);
 
 					DWORD_PTR dwDistance = (PBYTE)pHookFunction < (PBYTE)pSystemFunction ? 
 						(PBYTE)pSystemFunction - (PBYTE)pHookFunction : (PBYTE)pHookFunction - (PBYTE)pSystemFunction;
