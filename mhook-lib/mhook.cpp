@@ -664,6 +664,12 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 					do {
 						if (te.th32OwnerProcessID == GetCurrentProcessId()) {
 							if (te.th32ThreadID != GetCurrentThreadId()) {
+								if (nCurrentThread >= nThreadsInProcess)
+								{
+									ODPRINTF((L"mhooks: SuspendOtherThreads: inconsistent number of threads while enumerating the snapshot"));
+									bFailed = true;
+									break;
+								}
 								// attempt to suspend it
 								g_hThreadHandles[nCurrentThread] = SuspendOneThread(te.th32ThreadID, pbCode, cbBytes);
 								if (GOOD_HANDLE(g_hThreadHandles[nCurrentThread])) {
